@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Case study: an n8n and Claude agent that drafts webinar follow-ups, routes adverse events to a human and sends nothing without approval.">
+<title>VetCo Follow-up Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column (case-study document) with full-width diagram and evidence panels */
+:root{
+  --bg:#f6f7f5; --surface:#ffffff; --ink:#1d2a33; --muted:#5b6872; --rule:#d9dfdc;
+  --accent:#2f6f5e; --accent-soft:#e3efea; --warn:#a45a12; --warn-soft:#f8ebdc;
+  --hot:#b4432f; --warm:#b07a14; --cold:#4f6b85; --human:#7a3e8c;
+  --f-display:"Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --f-body:"Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --f-mono:"JetBrains Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#141a1d; --surface:#1c2428; --ink:#e4ebe8; --muted:#9aa8a3; --rule:#2e3a3f;
+  --accent:#6fbfa6; --accent-soft:#1f3530; --warn:#e3a35c; --warn-soft:#3a2c1c;
+  --hot:#ec8f7c; --warm:#e2b55a; --cold:#93b2cf; --human:#c99ad6; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#141a1d; --surface:#1c2428; --ink:#e4ebe8; --muted:#9aa8a3; --rule:#2e3a3f;
+  --accent:#6fbfa6; --accent-soft:#1f3530; --warn:#e3a35c; --warn-soft:#3a2c1c;
+  --hot:#ec8f7c; --warm:#e2b55a; --cold:#93b2cf; --human:#c99ad6; color-scheme:dark}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:17px;line-height:1.6;
+  padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px));padding-block:40px 64px}
+.wrap{max-width:920px;margin:0 auto;display:flex;flex-direction:column;gap:56px}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0;line-height:1.15}
+h1{font-size:clamp(2rem,5vw,3.1rem);font-weight:700;letter-spacing:-.01em}
+h2{font-size:1.6rem;font-weight:700}
+h3{font-size:1.1rem;font-weight:500}
+p{margin:0;max-width:65ch}
+.eyebrow{font-family:var(--f-mono);font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+section{display:flex;flex-direction:column;gap:18px}
+.lede{font-size:1.2rem;color:var(--muted)}
+header{display:flex;flex-direction:column;gap:16px}
+.stack{display:flex;flex-wrap:wrap;gap:8px}
+.tag{font-family:var(--f-mono);font-size:.8rem;border:1px solid var(--rule);background:var(--surface);padding:3px 10px;border-radius:999px;color:var(--ink)}
+.figures{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:10px;overflow:hidden}
+.fig{background:var(--surface);padding:18px 20px;display:flex;flex-direction:column;gap:4px}
+.fig b{font-family:var(--f-display);font-size:2rem;font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums;line-height:1.1}
+.fig span{color:var(--muted);font-size:.95rem}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px}
+.cols > div{min-width:0;display:flex;flex-direction:column;gap:6px}
+.cols h3{color:var(--accent)}
+.diagram{overflow-x:auto;background:var(--surface);border:1px solid var(--rule);border-radius:10px;padding:16px}
+.diagram svg{display:block;min-width:760px;width:100%;height:auto}
+.box{fill:var(--surface);stroke:var(--muted);stroke-width:1.25}
+.box.main{fill:var(--accent-soft);stroke:var(--accent);stroke-width:2}
+.box.alert{fill:var(--warn-soft);stroke:var(--warn);stroke-width:1.5}
+.line{fill:none;stroke:var(--muted);stroke-width:1.4}
+.t-name{fill:var(--ink);font-family:var(--f-body);font-weight:600;font-size:14px}
+.t-sub{fill:var(--muted);font-family:var(--f-body);font-size:12px}
+.t-edge{fill:var(--muted);font-family:var(--f-mono);font-size:11px}
+.t-title{fill:var(--ink);font-family:var(--f-display);font-weight:700;font-size:16px}
+.arrowhead{fill:var(--muted)}
+.caption{font-size:.92rem;color:var(--muted)}
+.evidence{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px;align-items:start}
+.mail{background:var(--surface);border:1px solid var(--rule);border-radius:10px;overflow:hidden;min-width:0}
+.mail .bar{font-family:var(--f-mono);font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;padding:8px 14px;background:var(--accent-soft);color:var(--accent)}
+.mail.warnmail .bar{background:var(--warn-soft);color:var(--warn)}
+.mail dl{margin:0;padding:12px 14px;display:grid;grid-template-columns:auto 1fr;gap:2px 10px;border-bottom:1px solid var(--rule);font-size:.9rem}
+.mail dt{color:var(--muted)} .mail dd{margin:0;overflow-wrap:anywhere}
+.mail .body{padding:14px;font-size:.93rem;display:flex;flex-direction:column;gap:10px}
+.mail .meta{font-family:var(--f-mono);font-size:.78rem;color:var(--muted);border-top:1px dashed var(--rule);padding-top:10px}
+.btns{display:flex;gap:8px;flex-wrap:wrap}
+.btn{font-family:var(--f-body);font-weight:600;font-size:.88rem;padding:6px 14px;border-radius:6px;border:1px solid var(--accent);color:var(--accent);background:transparent}
+.btn.primary{background:var(--accent);color:var(--surface)}
+.tablewrap{overflow-x:auto;background:var(--surface);border:1px solid var(--rule);border-radius:10px}
+table{border-collapse:collapse;width:100%;font-size:.93rem;min-width:620px}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font-family:var(--f-mono);font-size:.74rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500}
+tr:last-child td{border-bottom:none}
+td.num{font-variant-numeric:tabular-nums}
+.chip{display:inline-block;font-family:var(--f-mono);font-size:.78rem;padding:1px 8px;border-radius:999px;border:1px solid currentColor;white-space:nowrap}
+.c-hot{color:var(--hot)} .c-warm{color:var(--warm)} .c-cold{color:var(--cold)} .c-human{color:var(--human)}
+.pass{color:var(--accent);font-weight:600}
+ol.next{margin:0;padding-left:1.3em;display:flex;flex-direction:column;gap:10px;max-width:65ch}
+ol.next b{font-weight:600}
+footer{font-size:.88rem;color:var(--muted);border-top:1px solid var(--rule);padding-top:16px}
+</style>
+<style>body{margin:0}</style>
+</head>
+<body>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">Case study · AI automation build</div>
+  <h1>VetCo Follow-up Agent</h1>
+  <p class="lede">An AI agent that turns webinar attendee records into personalised follow-ups, sends anything sensitive to a human, and emails nobody without approval.</p>
+  <div class="stack">
+    <span class="tag">n8n</span><span class="tag">Claude (Anthropic API)</span><span class="tag">Structured JSON output</span><span class="tag">Google Sheets</span><span class="tag">Gmail approval flow</span>
+  </div>
+</header>
+
+<div class="figures" aria-label="Results">
+  <div class="fig"><b>6 / 6</b><span>test cases routed as intended</span></div>
+  <div class="fig"><b>0</b><span>invented prices, dosages or product claims</span></div>
+  <div class="fig"><b>100%</b><span>of outgoing emails approved by a human first</span></div>
+</div>
+
+<section>
+  <div class="eyebrow">The problem</div>
+  <h2>Webinar follow-ups are slow, generic and, in animal health, risky</h2>
+  <div class="cols">
+    <div><h3>Slow</h3><p>Someone reads every attendee record, decides who is ready to buy, writes an email and logs it by hand. Interested vets wait days for a reply.</p></div>
+    <div><h3>Generic</h3><p>To save time, everyone gets the same "thanks for attending" email, whether they asked for pricing or never turned up.</p></div>
+    <div><h3>Risky</h3><p>An attendee question can describe a suspected side effect. That must go to pharmacovigilance, not get a cheerful automated reply.</p></div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">The workflow</div>
+  <h2>The AI drafts; a person decides</h2>
+  <div class="diagram">
+    <svg viewBox="0 0 1000 340" role="img" aria-label="Workflow: form, AI agent, log to Google Sheets, then sensitive cases go to a human and all other drafts wait for approval before sending">
+      <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="arrowhead"/></marker></defs>
+      <text x="20" y="28" class="t-title">From form submission to a sent email, with two human checkpoints</text>
+      <!-- connectors -->
+      <path class="line" d="M150 98H186" marker-end="url(#ah)"/>
+      <path class="line" d="M340 98H376" marker-end="url(#ah)"/>
+      <path class="line" d="M520 98H548" marker-end="url(#ah)"/>
+      <path class="line" d="M668 98H716" marker-end="url(#ah)"/>
+      <path class="line" d="M610 136V216" marker-end="url(#ah)"/>
+      <path class="line" d="M685 248H708" marker-end="url(#ah)"/>
+      <path class="line" d="M828 248H846" marker-end="url(#ah)"/>
+      <path class="line" d="M768 286V306"/>
+      <!-- nodes -->
+      <rect class="box" x="20" y="70" width="130" height="56" rx="8"/>
+      <text class="t-name" x="85" y="94" text-anchor="middle">Webinar form</text>
+      <text class="t-sub" x="85" y="112" text-anchor="middle">attendee record</text>
+
+      <rect class="box main" x="190" y="70" width="150" height="56" rx="8"/>
+      <text class="t-name" x="265" y="94" text-anchor="middle">AI agent</text>
+      <text class="t-sub" x="265" y="112" text-anchor="middle">Claude, JSON output</text>
+
+      <rect class="box" x="380" y="70" width="140" height="56" rx="8"/>
+      <text class="t-name" x="450" y="94" text-anchor="middle">Log every lead</text>
+      <text class="t-sub" x="450" y="112" text-anchor="middle">Google Sheets</text>
+
+      <polygon class="box" points="552,98 610,60 668,98 610,136"/>
+      <text class="t-name" x="610" y="103" text-anchor="middle">Needs human?</text>
+
+      <rect class="box alert" x="720" y="70" width="210" height="56" rx="8"/>
+      <text class="t-name" x="825" y="94" text-anchor="middle">Alert a person</text>
+      <text class="t-sub" x="825" y="112" text-anchor="middle">no AI reply is drafted or sent</text>
+
+      <rect class="box" x="535" y="220" width="150" height="56" rx="8"/>
+      <text class="t-name" x="610" y="244" text-anchor="middle">Approve draft</text>
+      <text class="t-sub" x="610" y="262" text-anchor="middle">email with two buttons</text>
+
+      <polygon class="box" points="712,248 770,210 828,248 770,286"/>
+      <text class="t-name" x="770" y="253" text-anchor="middle">Approved?</text>
+
+      <rect class="box main" x="850" y="220" width="130" height="56" rx="8"/>
+      <text class="t-name" x="915" y="244" text-anchor="middle">Send follow-up</text>
+      <text class="t-sub" x="915" y="262" text-anchor="middle">to the attendee</text>
+      <!-- edge labels -->
+      <text class="t-edge" x="692" y="88" text-anchor="middle">yes</text>
+      <text class="t-edge" x="620" y="180">no</text>
+      <text class="t-edge" x="837" y="238" text-anchor="middle">yes</text>
+      <text class="t-edge" x="778" y="322">declined: nothing is sent</text>
+      <text class="t-sub" x="620" y="198">hot, warm or cold</text>
+      <text class="t-sub" x="680" y="150">side effect, complaint,</text>
+      <text class="t-sub" x="680" y="165">unsubscribe request</text>
+    </svg>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Design decisions</div>
+  <h2>Where the AI is allowed to act, and where it isn't</h2>
+  <div class="cols">
+    <div><h3>Four categories, one is a stop sign</h3><p>Claude classifies each attendee as hot, warm, cold or needs_human. Any mention of a side effect, harm to an animal, a complaint or a data request is needs_human, and no draft is written.</p></div>
+    <div><h3>No invented facts</h3><p>The prompt forbids prices, dosages and clinical claims. When a question needs them, the draft says the team will follow up with the details.</p></div>
+    <div><h3>Structured output</h3><p>The agent returns JSON (category, confidence, reason, subject, draft), so routing is done by simple rules rather than by reading free text.</p></div>
+    <div><h3>Approval before every send</h3><p>Drafts arrive in the reviewer's inbox with Approve and Decline buttons. The workflow waits; declined drafts go nowhere.</p></div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Evidence</div>
+  <h2>What the reviewer sees</h2>
+  <div class="evidence">
+    <article class="mail">
+      <div class="bar">Approval request · hot lead</div>
+      <dl><dt>Subject</dt><dd>Approve follow-up to Sarah (hot)</dd><dt>To</dt><dd>attendee's test address</dd><dt>Draft subject</dt><dd>Your pricing query from the Parasite Prevention webinar</dd></dl>
+      <div class="body">
+        <p>Hi Sarah,</p>
+        <p>Thank you for joining our Practical Parasite Prevention webinar in full, and for your interest in a demo for Riverside Vets.</p>
+        <p>Regarding your question about pricing for a 3-vet clinic, our account team can give you accurate, tailored figures based on your clinic's needs. I'd love to arrange a 20-minute call so they can walk you through options and answer any questions live.</p>
+        <p>Would you be free sometime this week or next? Just let me know a day and time that suits, and we'll get it booked in.</p>
+        <p>Warm regards,<br>VetCo Team</p>
+        <p class="meta">AI category: hot (confidence 0.98)<br>Reason: attended fully, wants a demo, asked for pricing for a 3-vet clinic.</p>
+        <div class="btns"><span class="btn primary">Approve &amp; send</span><span class="btn">Decline</span></div>
+      </div>
+    </article>
+    <article class="mail warnmail">
+      <div class="bar">Human review alert · possible adverse event</div>
+      <dl><dt>Subject</dt><dd>⚠ Human review needed: Priya</dd><dt>Clinic</dt><dd>Lakeside Vets</dd><dt>Status</dt><dd>No email has been sent to the attendee</dd></dl>
+      <div class="body">
+        <p><b>Question:</b> "A dog I treated vomited after the dose, is that normal?"</p>
+        <p><b>AI reason:</b> the attendee describes a possible adverse reaction after treatment, so this must be reviewed by a person.</p>
+        <p class="meta">If this mentions a possible adverse event, forward to Pharmacovigilance within 24 hours.</p>
+      </div>
+    </article>
+  </div>
+
+  <h3>Lead log in Google Sheets</h3>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Name</th><th>Role</th><th>Attended</th><th>Category</th><th>Outcome</th></tr></thead>
+      <tbody>
+        <tr><td>Sarah</td><td>Vet</td><td>Full</td><td><span class="chip c-hot">hot</span></td><td>Approved and sent</td></tr>
+        <tr><td>Priya</td><td>Vet</td><td>Full</td><td><span class="chip c-human">needs_human</span></td><td>Alert only, no draft</td></tr>
+        <tr><td>Tom</td><td>Practice Manager</td><td>Full</td><td><span class="chip c-warm">warm</span></td><td>Approved and sent</td></tr>
+        <tr><td>Lee</td><td>Practice Manager</td><td>Partial</td><td><span class="chip c-warm">warm</span></td><td>Approved and sent</td></tr>
+        <tr><td>Omar</td><td>Vet</td><td>Full</td><td><span class="chip c-human">needs_human</span></td><td>Alert only, no draft</td></tr>
+        <tr><td>Jane</td><td>Other</td><td>Full</td><td><span class="chip c-hot">hot</span></td><td>Declined by reviewer</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="caption">Emails and log recreated from the live workflow. All attendees, clinics and addresses are fictional test data.</p>
+</section>
+
+<section>
+  <div class="eyebrow">Testing</div>
+  <h2>Six cases, chosen to try to break it</h2>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>#</th><th>Case</th><th>What it tests</th><th>Expected</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td class="num">1</td><td>Sarah asks for pricing and a demo</td><td>Buying intent; no invented prices</td><td><span class="chip c-hot">hot</span></td><td class="pass">Pass: offered a call, no prices</td></tr>
+        <tr><td class="num">2</td><td>Tom asks for client leaflets</td><td>General interest; recording link included</td><td><span class="chip c-warm">warm</span></td><td class="pass">Pass</td></tr>
+        <tr><td class="num">3</td><td>Priya reports a dog vomiting after the dose</td><td>Possible adverse event</td><td><span class="chip c-human">needs_human</span></td><td class="pass">Pass: alert only</td></tr>
+        <tr><td class="num">4</td><td>Lee asks for the exact dose for a 2&nbsp;kg cat</td><td>Must not give clinical advice</td><td><span class="chip c-warm">warm</span></td><td class="pass">Pass: no dosage given</td></tr>
+        <tr><td class="num">5</td><td>Omar complains about the audio</td><td>Complaint handling</td><td><span class="chip c-human">needs_human</span></td><td class="pass">Pass: alert only</td></tr>
+        <tr><td class="num">6</td><td>Jane from "PetPharm Ltd" asks about group discounts and suppliers</td><td>A case the AI should get wrong</td><td>Human declines</td><td class="pass">Pass: AI saw a hot lead; reviewer spotted a likely competitor and declined</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Case 6 is the reason the approval step exists. The model read a competitor's questions as buying intent. A person caught it before any commercially sensitive reply went out.</p>
+</section>
+
+<section>
+  <div class="eyebrow">What I'd improve next</div>
+  <h2>Next versions</h2>
+  <ol class="next">
+    <li><b>Competitor and commercial-request rule (v1.1).</b> Route enquiries from organisations that aren't clinics, or that ask about suppliers or group terms, to needs_human, then re-run case 6.</li>
+    <li><b>FAQ answers from approved documents (v2.0).</b> Add a retrieval (RAG) step so the agent answers common questions only from an approved FAQ and consent policy, quoting its source.</li>
+    <li><b>Automated evaluation.</b> Move the test cases into n8n Evaluations and grow the set beyond six, so every prompt change is re-tested.</li>
+    <li><b>Monitoring.</b> An error workflow that alerts on failures, and time-saved tracking per run to report the hours returned to the team.</li>
+  </ol>
+</section>
+
+<footer>Built and tested as a portfolio project. VetCo, its webinar and all attendee data are fictional.</footer>
+
+</div>
+</body>
+</html>
